@@ -9,7 +9,7 @@ on:
 env:
   AWS_REGION: ap-northeast-2
   S3_BUCKET: ha-lab-deploy-bucket-${{ secrets.AWS_ACCOUNT_ID }}
-  ASG_NAME: la-lab
+  ASG_NAME: ha-lab   # ⚠️ 실제 ASG 이름 맞게 수정
   DEPLOY_DIR: /var/www/html
   APP_VERSION: ${{ github.sha }}
 
@@ -22,12 +22,13 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     
-#코드 체크아웃
     steps:
+
+    # 코드 체크아웃
     - name: Checkout
       uses: actions/checkout@v4
 
-#AWS 자격증명 설정
+    # AWS 자격증명 설정
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
@@ -35,14 +36,14 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-# 배포 버전 정보 INDEX.HTML에 자동주입
+    # 배포 버전 정보 INDEX.HTML에 자동주입
     - name: Inject version info
       run: |
         DEPLOY_TIME=$(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M KST')
         SHORT_SHA="${GITHUB_SHA::7}"
         sed -i "s/배포 버전: [^<]*/배포 버전: ${SHORT_SHA} (${DEPLOY_TIME})/" index.html || true
 
-# 4. S3에 배포 패키지 업로드
+    # 4. S3에 배포 패키지 업로드
     - name: Upload to S3
       run: |
         zip -r deploy-${APP_VERSION}.zip . \
@@ -54,7 +55,7 @@ jobs:
         aws s3 cp deploy-${APP_VERSION}.zip \
           s3://${S3_BUCKET}/releases/deploy-latest.zip
 
-# 5. ASG InService 인스턴스 ID 조회
+    # 5. ASG InService 인스턴스 ID 조회
     - name: Get ASG instance IDs
       id: get_instances
       run: |
@@ -64,7 +65,7 @@ jobs:
           --output text | tr '\t' ' ')
         echo "instance_ids=${INSTANCE_IDS}" >> $GITHUB_OUTPUT
 
-# 6. SSM으로 각 인스턴스에 배포
+    # 6. SSM으로 각 인스턴스에 배포
     - name: Deploy via SSM
       run: |
         for INSTANCE_ID in ${{ steps.get_instances.outputs.instance_ids }}; do
@@ -92,6 +93,7 @@ jobs:
             if [ "$STATUS" = "Success" ]; then
               break
             elif [ "$STATUS" = "Failed" ]; then
+              echo "❌ 배포 실패: $INSTANCE_ID"
               exit 1
             fi
           done
@@ -99,7 +101,7 @@ jobs:
           echo "✅ $INSTANCE_ID 배포 완료"
         done
 
-# 7. ALB 확인
+    # 7. ALB 확인
     - name: Verify via ALB
       run: |
         curl -sf --max-time 10 http://${{ secrets.ALB_DNS }} && echo '✅ ALB 정상'
