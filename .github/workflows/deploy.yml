@@ -28,9 +28,7 @@ jobs:
 
       - name: Create deploy package
         run: |
-          zip -r deploy.zip . \
-            -x ".git/*" \
-            -x ".github/*"
+          zip deploy.zip index.html
 
       - name: Upload to S3
         run: |
