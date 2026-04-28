@@ -44,12 +44,12 @@ jobs:
 
           echo "ids=$IDS" >> $GITHUB_OUTPUT
 
-      - name: Deploy to EC2 via SSM
+      - name: Deploy to EC2 via SSM and wait
         run: |
           for id in ${{ steps.get_instances.outputs.ids }}; do
             echo "Deploying to $id"
 
-            aws ssm send-command \
+            CMD_ID=$(aws ssm send-command \
               --instance-ids "$id" \
               --document-name "AWS-RunShellScript" \
               --parameters 'commands=[
@@ -58,8 +58,23 @@ jobs:
                 "mkdir -p /tmp/deploy",
                 "unzip -o /tmp/deploy.zip -d /tmp/deploy",
                 "cp -r /tmp/deploy/* ${{ env.DEPLOY_DIR }}/",
+                "ls -al ${{ env.DEPLOY_DIR }}",
                 "nginx -t",
                 "systemctl reload nginx"
               ]' \
-              --timeout-seconds 300
+              --timeout-seconds 300 \
+              --query "Command.CommandId" \
+              --output text)
+
+            echo "Command ID: $CMD_ID"
+
+            aws ssm wait command-executed \
+              --command-id "$CMD_ID" \
+              --instance-id "$id"
+
+            aws ssm get-command-invocation \
+              --command-id "$CMD_ID" \
+              --instance-id "$id" \
+              --query '[Status,StandardOutputContent,StandardErrorContent]' \
+              --output text
           done
