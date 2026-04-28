@@ -1,0 +1,48 @@
+name: Deploy via SSM
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  AWS_REGION: ap-northeast-2
+  S3_BUCKET: ha-lab-deploy-bucket-${{ secrets.AWS_ACCOUNT_ID }}
+  ASG_NAME: ha-lab-asg
+  DEPLOY_DIR: /var/www/html
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload to S3
+        run: |
+          zip -r deploy.zip . -x ".git/*"
+          aws s3 cp deploy.zip s3://${S3_BUCKET}/deploy.zip
+
+      - name: Get instances
+        id: get_instances
+        run: |
+          IDS=$(aws autoscaling describe-auto-scaling-groups \
+          --auto-scaling-group-names "${ASG_NAME}" \
+          --query 'AutoScalingGroups[0].Instances[].InstanceId' \
+          --output text)
+          echo "ids=$IDS" >> $GITHUB_OUTPUT
+
+      - name: Deploy
+        run: |
+          for id in ${{ steps.get_instances.outputs.ids }}; do
+            aws ssm send-command \
+              --instance-ids "$id" \
+              --document-name "AWS-RunShellScript" \
+              --parameters commands="aws s3 cp s3://${S3_BUCKET}/deploy.zip /tmp/deploy.zip && unzip -o /tmp/deploy.zip -d ${DEPLOY_DIR} && systemctl restart nginx"
+          done
